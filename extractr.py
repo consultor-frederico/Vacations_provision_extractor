@@ -2,14 +2,11 @@ import pypdf
 import re
 import csv
 import os
+import sys
 
-# O script vai procurar o arquivo automaticamente para evitar erro de digitação
-def localizar_arquivo():
-    arquivos = os.listdir('.')
-    for f in arquivos:
-        if f.startswith("1001") and f.endswith(".pdf"):
-            return f
-    return None
+# Configurações
+PDF_ENTRADA = "ferias.pdf"
+CSV_SAIDA = "provisao_ferias.csv"
 
 def formatar_valor(v):
     if not v: return 0.0
@@ -23,30 +20,31 @@ def formatar_valor(v):
 
 def gravar_no_csv(dados, writer):
     if not dados or not dados['MAT']: return
+    # Prioridade: TOTAL > (VENCIDAS + A VENCER)
     alvo = dados["TOTAL"] or dados["VENCIDAS"] or dados["A VENCER"]
     if not alvo and (dados["VENCIDAS"] and dados["A VENCER"]):
         alvo = [x + y for x, y in zip(dados["VENCIDAS"], dados["A VENCER"])]
+    
     if alvo:
         linha = [dados["MAT"], dados["NOME"]] + [f"{x:.2f}".replace(".", ",") for x in alvo]
         writer.writerow(linha)
 
-print("--- DIAGNÓSTICO DE AMBIENTE ---")
-pdf_encontrado = localizar_arquivo()
-if not pdf_encontrado:
-    print(f"ERRO: Nenhum arquivo PDF começando com '1001' foi encontrado na pasta raiz.")
-    print(f"Arquivos presentes: {os.listdir('.')}")
-    exit(1)
-else:
-    print(f"Sucesso! Arquivo localizado: {pdf_encontrado}")
+# Verificação de existência do ficheiro
+if not os.path.exists(PDF_ENTRADA):
+    print(f"ERRO: O ficheiro '{PDF_ENTRADA}' não foi encontrado na pasta raiz.")
+    print(f"Arquivos detectados no diretório: {os.listdir('.')}")
+    sys.exit(1)
 
-with open("provisao_ferias.csv", 'w', newline='', encoding='utf-8-sig') as f_out:
+print(f"Iniciando extração do ficheiro: {PDF_ENTRADA}")
+
+with open(CSV_SAIDA, 'w', newline='', encoding='utf-8-sig') as f_out:
     writer = csv.writer(f_out, delimiter=';')
     writer.writerow(["MAT", "NOME", "DIAS", "VALOR", "ADIC_1_3", "TOTAL_FERIAS", "INSS", "FGTS", "ENCARGOS", "GERAL"])
 
     colab = {"MAT": None, "NOME": "", "TOTAL": None, "VENCIDAS": None, "A VENCER": None}
     secao = None
 
-    reader = pypdf.PdfReader(pdf_encontrado)
+    reader = pypdf.PdfReader(PDF_ENTRADA)
     for i, pagina in enumerate(reader.pages):
         texto = pagina.extract_text()
         if not texto: continue
@@ -70,6 +68,8 @@ with open("provisao_ferias.csv", 'w', newline='', encoding='utf-8-sig') as f_out
                     colab[secao] = [v[0], v[1], v[2]+v[3], v[4], v[5], v[6], v[7], v[8]] if len(v) >= 9 else v
 
         if (i + 1) % 50 == 0:
-            print(f"Páginas processadas: {i+1}/{len(reader.pages)}")
+            print(f"Progresso: {i+1}/{len(reader.pages)} páginas...")
 
     gravar_no_csv(colab, writer)
+
+print("Processamento concluído com sucesso!")
