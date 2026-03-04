@@ -1,28 +1,23 @@
 name: Executar Extracao de Ferias
 
 on:
-  workflow_dispatch: # Permite que você clique em um botão para rodar
+  workflow_dispatch: # Permite rodar manualmente clicando em um botão
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Baixar codigo do repo
-        uses: actions/checkout@v3
-
-      - name: Instalar Python
+      - uses: actions/checkout@v3
+      - name: Configurar Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
       - name: Instalar dependencias
         run: pip install -r requirements.txt
-
-      - name: Rodar script de extracao
+      - name: Rodar script
         run: python extrair_ferias.py
-
-      - name: Salvar resultado (CSV)
+      - name: Upload do Resultado
         uses: actions/upload-artifact@v3
         with:
-          name: relatorio-ferias
+          name: csv-ferias-extraido
           path: provisao_ferias.csv
