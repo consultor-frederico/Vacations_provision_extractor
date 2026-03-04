@@ -56,7 +56,7 @@ with pdfplumber.open(PDF_PATH) as pdf:
         secao = None
 
         for linha in linhas:
-            # Captura Matrícula (alfanumérica) e Nome após as etiquetas MAT: e NOME:
+            # Captura Matrícula (alfanumérica) e Nome após MAT: e NOME:
             mat_match = re.search(r'MAT:\s*(\w+)', linha)
             nome_match = re.search(r'NOME:\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s]+)', linha)
             
@@ -69,7 +69,7 @@ with pdfplumber.open(PDF_PATH) as pdf:
                         "TOTAL": None, "VENCIDAS": None, "A VENCER": None
                     }
 
-            # Identificação de seção (Ignora TOTAL FERIAS / TOTAL GERAL como cabeçalho de seção)
+            # Identificação de seção (Evita confundir com TOTAL FERIAS)
             if "TOTAL" in linha and "FERIAS" not in linha and "GERAL" not in linha:
                 secao = "TOTAL"
             elif "VENCIDAS" in linha or "VENOIDAS" in linha:
@@ -83,7 +83,7 @@ with pdfplumber.open(PDF_PATH) as pdf:
                 if colunas:
                     colaboradores[mat_atual][secao] = colunas
 
-# Consolidação dos dados
+# Consolidação final
 resultado = []
 for mat, d in colaboradores.items():
     if d["TOTAL"]: final = d["TOTAL"]
@@ -100,4 +100,4 @@ df = pd.DataFrame(resultado, columns=[
 ])
 
 df.to_csv(OUTPUT_CSV, sep=";", index=False, decimal=",", encoding="utf-8-sig")
-print(f"Sucesso! {len(df)} colaboradores extraídos.")
+print(f"Sucesso! {len(df)} colaboradores processados.")
