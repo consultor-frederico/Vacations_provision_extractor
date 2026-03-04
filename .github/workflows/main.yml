@@ -1,23 +1,29 @@
-name: Executar Extracao de Ferias
+name: Extrator de Ferias 2026
 
 on:
-  workflow_dispatch: # Permite rodar manualmente clicando em um botão
+  workflow_dispatch: # Botão para rodar manualmente
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Baixar Codigo
+        uses: actions/checkout@v4
+
       - name: Configurar Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-      - name: Instalar dependencias
-        run: pip install -r requirements.txt
-      - name: Rodar script
-        run: python extrair_ferias.py
-      - name: Upload do Resultado
-        uses: actions/upload-artifact@v3
+          python-version: '3.11'
+
+      - name: Instalar Dependencias
+        run: pip install pypdf==5.1.0
+
+      - name: Executar Script
+        run: python extrator_ferias.py
+
+      - name: Salvar Resultado (CSV)
+        uses: actions/upload-artifact@v4 # ATUALIZADO PARA V4
         with:
-          name: csv-ferias-extraido
+          name: relatorio-ferias-extraido
           path: provisao_ferias.csv
+          retention-days: 5
