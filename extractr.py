@@ -1,113 +1,94 @@
-import pdfplumber
-import pandas as pd
+import pypdf
 import re
 import csv
-from decimal import Decimal, InvalidOperation
 
+# Configurações
 PDF_PATH = "1001 a 1012 Provisao Ferias 012026.pdf"
 OUTPUT_CSV = "provisao_ferias.csv"
 
-def to_decimal(valor):
-    if not valor or valor.strip() in ["-", ""]: return Decimal("0")
-    limpo = valor.replace(".", "").replace(",", ".")
-    if "(" in limpo:
-        limpo = "-" + limpo.replace("(", "").replace(")", "")
-    try:
-        return Decimal(limpo)
-    except:
-        return Decimal("0")
+def limpar_valor(v):
+    """Converte o formato brasileiro (1.234,56) para float puro."""
+    if not v or v.strip() in ["-", ""]: return 0.0
+    res = v.replace(".", "").replace(",", ".")
+    if "(" in res: # Trata negativos (100,00)
+        res = "-" + res.replace("(", "").replace(")", "")
+    try: return float(res)
+    except: return 0.0
 
-def extrair_valores_saldo(linha):
-    # Captura valores como 1.234,56 ou (123,45)
-    numeros = re.findall(r'\(?\d+[.,]\d+\)?', linha)
-    if len(numeros) >= 9:
-        return [
-            to_decimal(numeros[0]), # Dias
-            to_decimal(numeros[1]), # Valor
-            to_decimal(numeros[2]) + to_decimal(numeros[3]), # Adic + 1/3
-            to_decimal(numeros[4]), # Total Ferias
-            to_decimal(numeros[5]), # INSS
-            to_decimal(numeros[6]), # FGTS
-            to_decimal(numeros[7]), # Tot Enc
-            to_decimal(numeros[8])  # Total Geral
-        ]
-    return None
+def processar_e_salvar(colab, writer):
+    """Aplica a regra de hierarquia e grava no CSV."""
+    if not colab or not colab['MAT']: return
 
-def salvar_colaborador(dados, writer):
-    if not dados or not dados['MAT']: return
-    
-    # Lógica de Hierarquia
-    if dados["TOTAL"]: final = dados["TOTAL"]
-    elif dados["VENCIDAS"] and dados["A VENCER"]:
-        final = [x + y for x, y in zip(dados["VENCIDAS"], dados["A VENCER"])]
-    elif dados["VENCIDAS"]: final = dados["VENCIDAS"]
-    elif dados["A VENCER"]: final = dados["A VENCER"]
+    # Regra: TOTAL > (VENCIDAS + A VENCER)
+    if colab["TOTAL"]:
+        dados = colab["TOTAL"]
+    elif colab["VENCIDAS"] and colab["A VENCER"]:
+        dados = [x + y for x, y in zip(colab["VENCIDAS"], colab["A VENCER"])]
+    elif colab["VENCIDAS"]:
+        dados = colab["VENCIDAS"]
+    elif colab["A VENCER"]:
+        dados = colab["A VENCER"]
     else: return
 
-    writer.writerow([
-        dados["MAT"], dados["NOME"], 
-        str(final[0]).replace('.', ','), str(final[1]).replace('.', ','),
-        str(final[2]).replace('.', ','), str(final[3]).replace('.', ','),
-        str(final[4]).replace('.', ','), str(final[5]).replace('.', ','),
-        str(final[6]).replace('.', ','), str(final[7]).replace('.', ',')
-    ])
+    # Prepara a linha formatada
+    linha_formatada = [colab["MAT"], colab["NOME"]] + [f"{x:.2f}".replace(".", ",") for x in dados]
+    writer.writerow(linha_formatada)
 
-# --- INÍCIO DO PROCESSAMENTO ---
-print("Iniciando extração em tempo real...")
+# --- INÍCIO DO PROCESSO ---
+print(f"Iniciando processamento de {PDF_PATH}...")
 
-with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8-sig') as f:
-    writer = csv.writer(f, delimiter=';')
+with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8-sig') as f_out:
+    writer = csv.writer(f_out, delimiter=';')
     writer.writerow(["MAT", "NOME", "DIAS DE DIREITO", "VALOR", "ADICIONAIS 1/3 CONSTIT", "TOTAL FERIAS", "INSS", "FGTS", "TOT.ENCARGOS", "TOTAL GERAL"])
 
     colab_atual = {"MAT": None, "NOME": "", "TOTAL": None, "VENCIDAS": None, "A VENCER": None}
-    secao = None
+    secao_ativa = None
 
-    with pdfplumber.open(PDF_PATH) as pdf:
-        for i, pagina in enumerate(pdf.pages):
-            texto = pagina.extract_text()
-            if not texto: continue
-            
-            linhas = texto.split('\n')
-            for j, linha in enumerate(linhas):
+    reader = pypdf.PdfReader(PDF_PATH)
+    total_paginas = len(reader.pages)
+
+    for i, pagina in enumerate(reader.pages):
+        texto = pagina.extract_text()
+        if not texto: continue
+
+        for linha in texto.split("\n"):
+            # 1. Identifica novo colaborador
+            if "MAT:" in linha and "NOME:" in linha:
+                if colab_atual["MAT"]: 
+                    processar_e_salvar(colab_atual, writer)
                 
-                # Detecta Novo Colaborador (MAT: 000000)
-                if "MAT:" in linha:
-                    # Antes de começar o novo, salva o anterior se existir
-                    if colab_atual["MAT"]:
-                        salvar_colaborador(colab_atual, writer)
-                    
-                    # Reinicia objeto
-                    mat_m = re.search(r'MAT:\s*(\w+)', linha)
-                    nome_m = re.search(r'NOME:\s*(.*)', linha)
-                    
-                    colab_atual = {
-                        "MAT": mat_m.group(1) if mat_m else None,
-                        "NOME": nome_m.group(1).strip() if nome_m else "",
-                        "TOTAL": None, "VENCIDAS": None, "A VENCER": None
-                    }
-                    
-                    # Tenta pegar o resto do nome na linha de baixo (se não tiver CC: ou DT.BASE)
-                    if j + 1 < len(linhas) and "CC:" not in linhas[j+1] and "DT.BASE" not in linhas[j+1]:
-                        # Pega apenas a parte do texto que não são etiquetas
-                        nome_extra = re.sub(r'(FILIAL:|CC:|MAT:|DT.BASE:).*', '', linhas[j+1]).strip()
-                        if nome_extra:
-                            colab_atual["NOME"] += " " + nome_extra
+                m = re.search(r'MAT:\s*(\w+)', linha)
+                n = re.search(r'NOME:\s*(.*)', linha)
+                colab_atual = {
+                    "MAT": m.group(1) if m else None,
+                    "NOME": n.group(1).strip() if n else "",
+                    "TOTAL": None, "VENCIDAS": None, "A VENCER": None
+                }
+                continue
 
-                # Define Seção
-                if "TOTAL" in linha and "FERIAS" not in linha: secao = "TOTAL"
-                elif "VENCIDAS" in linha or "VENOIDAS" in linha: secao = "VENCIDAS"
-                elif "A VENCER" in linha: secao = "A VENCER"
+            # 2. Define a seção
+            if "TOTAL" in linha and "FERIAS" not in linha: secao_ativa = "TOTAL"
+            elif "VENCIDAS" in linha or "VENOIDAS" in linha: secao_ativa = "VENCIDAS"
+            elif "A VENCER" in linha: secao_ativa = "A VENCER"
 
-                # Pega Saldo
-                if "Saldo" in linha and "Atual" in linha:
-                    valores = extrair_valores_saldo(linha)
-                    if valores: colab_atual[secao] = valores
+            # 3. Captura o Saldo Atual
+            if "Saldo" in linha and "Atual" in linha:
+                # Busca valores no formato 0,00 ou 1.234,56 ou (100,00)
+                valores_str = re.findall(r'\(?\d+(?:\.\d{3})*,\d{2}\)?', linha)
+                if len(valores_str) >= 8:
+                    # Se houver 9 valores, somamos o 3º e 4º (Adicionais + 1/3)
+                    v = [limpar_valor(x) for x in valores_str]
+                    if len(v) >= 9:
+                        final_v = [v[0], v[1], v[2]+v[3], v[4], v[5], v[6], v[7], v[8]]
+                    else:
+                        final_v = v
+                    colab_atual[secao_ativa] = final_v
 
-            # Feedback de progresso
-            if (i + 1) % 50 == 0:
-                print(f"Página {i+1} processada...")
+        # Feedback a cada 50 páginas
+        if (i + 1) % 50 == 0:
+            print(f"Progresso: {i + 1} / {total_paginas} páginas processadas...")
 
-        # Salva o último colaborador do arquivo
-        salvar_colaborador(colab_atual, writer)
+    # Salva o último do arquivo
+    processar_e_salvar(colab_atual, writer)
 
-print(f"Concluído! Arquivo {OUTPUT_CSV} gerado com sucesso.")
+print(f"Finalizado! O arquivo {OUTPUT_CSV} foi gerado com sucesso.")
